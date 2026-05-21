@@ -425,6 +425,34 @@
   .sync-status[data-state="sending"] .label { color: var(--warn); }
   .sync-status[data-state="ok"]      .label { color: var(--signal); }
   .sync-status[data-state="err"]     .label { color: var(--accent); }
+
+  /* Long-session indicators (elapsed + wake lock) — replace gesture select while recording */
+  .rec-info {
+    flex: 1;
+    display: none;
+    flex-direction: column;
+    padding: 2px 4px;
+  }
+  .rec-info.show { display: flex; }
+  .rec-info .elapsed {
+    font-size: 16px;
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    color: var(--signal);
+    letter-spacing: 0.04em;
+    line-height: 1.1;
+  }
+  .rec-info .elapsed.warn   { color: var(--warn); }
+  .rec-info .elapsed.danger { color: var(--accent); }
+  .rec-info .wake {
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    margin-top: 1px;
+  }
+  .rec-info .wake.active { color: var(--signal); }
+  .rec-info .wake.failed { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -541,6 +569,10 @@
     <option value="rotate_in_place">10 · rotate in place</option>
     <option value="freeform">99 · freeform</option>
   </select>
+  <div class="rec-info" id="recInfo">
+    <span class="elapsed" id="elapsed">00:00</span>
+    <span class="wake" id="wake"></span>
+  </div>
   <button class="recbtn" id="recbtn"><span class="reclight"></span>rec</button>
   <button class="exportbtn" id="exportbtn">⇩</button>
 </div>
@@ -837,7 +869,12 @@ function startRecording() {
   state.recording = true;
   recbtn.classList.add('recording');
   recbtn.innerHTML = '<span class="reclight"></span>stop';
+  gestureSelect.style.display = 'none';
+  document.getElementById('recInfo').classList.add('show');
   toast(`recording · ${gesture}`);
+  acquireWakeLock();
+  startElapsedTimer();
+  startFlushTimer();
 }
 
 function stopRecording() {
@@ -853,6 +890,11 @@ function stopRecording() {
   state.currentSession = null;
   recbtn.classList.remove('recording');
   recbtn.innerHTML = '<span class="reclight"></span>rec';
+  gestureSelect.style.display = '';
+  document.getElementById('recInfo').classList.remove('show');
+  stopElapsedTimer();
+  stopFlushTimer();
+  releaseWakeLock();
   document.getElementById('sessionCount').textContent = state.sessions.length;
   toast(`saved · ${s.samples.length} samples · ${s.measured_hz.toFixed(1)} hz`);
   // Auto-persist to localStorage as a safety net
@@ -862,6 +904,100 @@ function stopRecording() {
   // Fire-and-forget upload to Supabase. Failures are surfaced via syncStatus
   // and toast; the localStorage copy remains as the offline backup.
   uploadSession(s);
+}
+
+// ============================================================
+// Long-session support: wake lock, elapsed display, periodic flush
+// ============================================================
+
+let wakeLock = null;
+
+function setWakeStatus(status) {
+  const el = document.getElementById('wake');
+  if (!el) return;
+  const labels = {
+    active: 'screen kept on',
+    released: 'wake released',
+    failed: 'no wake lock',
+    unsupported: 'wake unsupported',
+    idle: ''
+  };
+  el.textContent = labels[status] ?? status;
+  el.className = 'wake' + (status === 'active' ? ' active' : '') +
+                          (status === 'failed' || status === 'unsupported' ? ' failed' : '');
+}
+
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) {
+    setWakeStatus('unsupported');
+    return;
+  }
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    setWakeStatus('active');
+    wakeLock.addEventListener('release', () => {
+      // Released either by us or by iOS (e.g. tab backgrounded). Surface to UI;
+      // visibilitychange handler re-acquires if we're still recording.
+      wakeLock = null;
+      if (state.recording) setWakeStatus('released');
+    });
+  } catch (e) {
+    console.error('wake lock failed', e);
+    setWakeStatus('failed');
+  }
+}
+
+async function releaseWakeLock() {
+  if (wakeLock) {
+    try { await wakeLock.release(); } catch (e) { /* ignore */ }
+    wakeLock = null;
+  }
+  setWakeStatus('idle');
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (state.recording && document.visibilityState === 'visible' && !wakeLock) {
+    acquireWakeLock();
+  }
+});
+
+let elapsedTimer = null;
+function startElapsedTimer() {
+  const el = document.getElementById('elapsed');
+  const tick = () => {
+    if (!state.currentSession) return;
+    const ms = performance.now() - state.currentSession._startedPerfNow;
+    const total = Math.floor(ms / 1000);
+    const mm = String(Math.floor(total / 60)).padStart(2, '0');
+    const ss = String(total % 60).padStart(2, '0');
+    el.textContent = `${mm}:${ss}`;
+    el.className = 'elapsed' +
+      (total >= 25 * 60 ? ' danger' : total >= 20 * 60 ? ' warn' : '');
+  };
+  tick();
+  elapsedTimer = setInterval(tick, 1000);
+}
+function stopElapsedTimer() {
+  if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+  const el = document.getElementById('elapsed');
+  if (el) { el.textContent = '00:00'; el.className = 'elapsed'; }
+}
+
+let flushTimer = null;
+function startFlushTimer() {
+  flushTimer = setInterval(() => {
+    if (!state.currentSession) return;
+    try {
+      localStorage.setItem('iplay.in_progress', JSON.stringify({
+        savedAt: new Date().toISOString(),
+        session: state.currentSession
+      }));
+    } catch (e) { /* quota */ }
+  }, 30000);
+}
+function stopFlushTimer() {
+  if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
+  try { localStorage.removeItem('iplay.in_progress'); } catch (e) { /* ignore */ }
 }
 
 // ============================================================
