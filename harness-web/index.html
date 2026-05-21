@@ -453,6 +453,51 @@
   }
   .rec-info .wake.active { color: var(--signal); }
   .rec-info .wake.failed { color: var(--accent); }
+
+  /* Spotify chip in header */
+  .spotify-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 5px 9px;
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .spotify-chip .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--ink-faint);
+  }
+  .spotify-chip[data-state="connecting"] .dot {
+    background: var(--warn);
+    box-shadow: 0 0 6px var(--warn);
+    animation: pulse 1s ease-in-out infinite;
+  }
+  .spotify-chip[data-state="connected"] {
+    color: var(--signal);
+    border-color: var(--signal);
+  }
+  .spotify-chip[data-state="connected"] .dot {
+    background: var(--signal);
+    box-shadow: 0 0 6px var(--signal-glow);
+  }
+  .spotify-chip[data-state="error"] {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .spotify-chip[data-state="error"] .dot {
+    background: var(--accent);
+  }
 </style>
 </head>
 <body>
@@ -472,6 +517,9 @@
   <div class="meta">
     <div>device <span id="device">—</span></div>
     <div>rate <span class="hz" id="rate">— hz</span></div>
+    <div class="spotify-chip" id="spotifyChip" data-state="disconnected">
+      <span class="dot"></span><span id="spotifyLabel">spotify · tap to connect</span>
+    </div>
   </div>
 </header>
 
@@ -901,9 +949,25 @@ function stopRecording() {
   try {
     localStorage.setItem('iplay.sessions', JSON.stringify(state.sessions));
   } catch (e) { /* quota */ }
-  // Fire-and-forget upload to Supabase. Failures are surfaced via syncStatus
-  // and toast; the localStorage copy remains as the offline backup.
-  uploadSession(s);
+  // Attach Spotify tracks (if connected) then upload. Fire-and-forget;
+  // localStorage backup covers any failure.
+  finalizeAndUpload(s);
+}
+
+async function finalizeAndUpload(session) {
+  try {
+    const tracks = await fetchSpotifyTracksFor(session);
+    if (tracks && tracks.length) {
+      session.tracks = tracks;
+      toast(`+${tracks.length} spotify tracks`);
+      try {
+        localStorage.setItem('iplay.sessions', JSON.stringify(state.sessions));
+      } catch (e) { /* quota */ }
+    }
+  } catch (e) {
+    console.error('spotify tracks fetch failed', e);
+  }
+  uploadSession(session);
 }
 
 // ============================================================
@@ -999,6 +1063,248 @@ function stopFlushTimer() {
   if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
   try { localStorage.removeItem('iplay.in_progress'); } catch (e) { /* ignore */ }
 }
+
+// ============================================================
+// Spotify integration (PKCE + recently-played at stop)
+// ============================================================
+
+const SPOTIFY_CLIENT_ID    = "4e0a0bd71bb74b578d487a97e0506dc0";
+const SPOTIFY_REDIRECT_URI = "https://iplay-chi.vercel.app/";
+const SPOTIFY_SCOPES       = "user-read-currently-playing user-read-recently-played user-read-private";
+const SPOTIFY_AUTH_URL     = "https://accounts.spotify.com/authorize";
+const SPOTIFY_TOKEN_URL    = "https://accounts.spotify.com/api/token";
+const SPOTIFY_API_BASE     = "https://api.spotify.com/v1";
+const SPOTIFY_AUTH_KEY     = "iplay.spotify.auth";
+const SPOTIFY_PKCE_KEY     = "iplay.spotify.pkce";
+
+const spotifyChip  = document.getElementById('spotifyChip');
+const spotifyLabel = document.getElementById('spotifyLabel');
+
+function setSpotifyChip(stateName, label) {
+  spotifyChip.dataset.state = stateName;
+  spotifyLabel.textContent = label;
+}
+
+function loadSpotifyAuth() {
+  try {
+    const raw = localStorage.getItem(SPOTIFY_AUTH_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+function saveSpotifyAuth(auth) {
+  try { localStorage.setItem(SPOTIFY_AUTH_KEY, JSON.stringify(auth)); } catch (e) {}
+}
+function clearSpotifyAuth() {
+  try { localStorage.removeItem(SPOTIFY_AUTH_KEY); } catch (e) {}
+  try { localStorage.removeItem(SPOTIFY_PKCE_KEY); } catch (e) {}
+}
+
+function genRandomString(len) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+  const buf = new Uint8Array(len);
+  crypto.getRandomValues(buf);
+  return Array.from(buf, b => chars[b % chars.length]).join('');
+}
+
+async function sha256base64url(input) {
+  const data = new TextEncoder().encode(input);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  let bin = '';
+  for (const b of new Uint8Array(hash)) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+async function startSpotifyAuth() {
+  const verifier = genRandomString(64);
+  const csrfState = genRandomString(16);
+  const challenge = await sha256base64url(verifier);
+  try {
+    localStorage.setItem(SPOTIFY_PKCE_KEY, JSON.stringify({ verifier, state: csrfState }));
+  } catch (e) {}
+  const url = new URL(SPOTIFY_AUTH_URL);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('client_id', SPOTIFY_CLIENT_ID);
+  url.searchParams.set('redirect_uri', SPOTIFY_REDIRECT_URI);
+  url.searchParams.set('code_challenge_method', 'S256');
+  url.searchParams.set('code_challenge', challenge);
+  url.searchParams.set('scope', SPOTIFY_SCOPES);
+  url.searchParams.set('state', csrfState);
+  window.location.href = url.toString();
+}
+
+async function handleSpotifyRedirectIfPresent() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  const cbState = params.get('state');
+  const err = params.get('error');
+  if (err) {
+    setSpotifyChip('error', `spotify · ${err}`);
+    history.replaceState({}, document.title, window.location.pathname);
+    return;
+  }
+  if (!code) return;
+
+  let pkce = null;
+  try { pkce = JSON.parse(localStorage.getItem(SPOTIFY_PKCE_KEY) || 'null'); } catch (e) {}
+  if (!pkce || pkce.state !== cbState) {
+    setSpotifyChip('error', 'spotify · state mismatch');
+    history.replaceState({}, document.title, window.location.pathname);
+    return;
+  }
+
+  setSpotifyChip('connecting', 'spotify · finishing auth');
+  try {
+    const resp = await fetch(SPOTIFY_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type:    'authorization_code',
+        code,
+        redirect_uri:  SPOTIFY_REDIRECT_URI,
+        code_verifier: pkce.verifier,
+        client_id:     SPOTIFY_CLIENT_ID
+      })
+    });
+    if (!resp.ok) throw new Error(`${resp.status} ${(await resp.text()).slice(0,120)}`);
+    const data = await resp.json();
+    saveSpotifyAuth({
+      access_token:  data.access_token,
+      refresh_token: data.refresh_token,
+      expires_at:    Date.now() + (data.expires_in - 60) * 1000
+    });
+    try { localStorage.removeItem(SPOTIFY_PKCE_KEY); } catch (e) {}
+    history.replaceState({}, document.title, window.location.pathname);
+  } catch (e) {
+    console.error('spotify token exchange failed', e);
+    setSpotifyChip('error', 'spotify · auth failed');
+  }
+}
+
+async function refreshSpotifyToken() {
+  const auth = loadSpotifyAuth();
+  if (!auth?.refresh_token) return null;
+  try {
+    const resp = await fetch(SPOTIFY_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type:    'refresh_token',
+        refresh_token: auth.refresh_token,
+        client_id:     SPOTIFY_CLIENT_ID
+      })
+    });
+    if (!resp.ok) {
+      clearSpotifyAuth();
+      return null;
+    }
+    const data = await resp.json();
+    const next = {
+      access_token:  data.access_token,
+      refresh_token: data.refresh_token || auth.refresh_token,
+      expires_at:    Date.now() + (data.expires_in - 60) * 1000
+    };
+    saveSpotifyAuth(next);
+    return next;
+  } catch (e) {
+    console.error('spotify refresh failed', e);
+    return null;
+  }
+}
+
+async function spotifyApi(path) {
+  let auth = loadSpotifyAuth();
+  if (!auth) return null;
+  if (Date.now() > auth.expires_at) {
+    auth = await refreshSpotifyToken();
+    if (!auth) return null;
+  }
+  const doFetch = (a) => fetch(`${SPOTIFY_API_BASE}${path}`, {
+    headers: { 'Authorization': `Bearer ${a.access_token}` }
+  });
+  let resp = await doFetch(auth);
+  if (resp.status === 401) {
+    auth = await refreshSpotifyToken();
+    if (!auth) return null;
+    resp = await doFetch(auth);
+  }
+  if (resp.status === 204) return null;
+  if (!resp.ok) throw new Error(`spotify api ${resp.status}`);
+  return resp.json();
+}
+
+async function refreshSpotifyDisplay() {
+  const auth = loadSpotifyAuth();
+  if (!auth) {
+    setSpotifyChip('disconnected', 'spotify · tap to connect');
+    return;
+  }
+  try {
+    const profile = await spotifyApi('/me');
+    if (!profile) {
+      setSpotifyChip('error', 'spotify · auth lost — tap');
+      clearSpotifyAuth();
+      return;
+    }
+    setSpotifyChip('connected', `spotify · ${profile.display_name || profile.id}`);
+  } catch (e) {
+    setSpotifyChip('error', 'spotify · auth lost — tap');
+    clearSpotifyAuth();
+  }
+}
+
+async function fetchSpotifyTracksFor(session) {
+  if (!loadSpotifyAuth()) return null;
+  const startedMs = new Date(session.started_at).getTime();
+  const tracks = [];
+  try {
+    const rp = await spotifyApi(`/me/player/recently-played?limit=50&after=${startedMs}`);
+    if (rp?.items) {
+      for (const it of rp.items) {
+        tracks.push({
+          played_at:   it.played_at,
+          track_id:    it.track?.id ? `spotify:track:${it.track.id}` : null,
+          name:        it.track?.name,
+          artists:     (it.track?.artists || []).map(a => a.name),
+          duration_ms: it.track?.duration_ms,
+          source:      'recently_played'
+        });
+      }
+    }
+    const cp = await spotifyApi('/me/player/currently-playing');
+    if (cp?.item) {
+      tracks.push({
+        played_at:   new Date(Date.now() - (cp.progress_ms || 0)).toISOString(),
+        track_id:    cp.item.id ? `spotify:track:${cp.item.id}` : null,
+        name:        cp.item.name,
+        artists:     (cp.item.artists || []).map(a => a.name),
+        duration_ms: cp.item.duration_ms,
+        progress_ms: cp.progress_ms,
+        source:      'currently_playing'
+      });
+    }
+  } catch (e) {
+    console.error('spotify tracks fetch failed', e);
+  }
+  tracks.sort((a, b) => new Date(a.played_at) - new Date(b.played_at));
+  return tracks;
+}
+
+spotifyChip.addEventListener('click', () => {
+  if (state.recording) {
+    toast('finish recording first');
+    return;
+  }
+  if (loadSpotifyAuth()) {
+    if (!confirm('Disconnect Spotify?')) return;
+    clearSpotifyAuth();
+    setSpotifyChip('disconnected', 'spotify · tap to connect');
+    return;
+  }
+  startSpotifyAuth();
+});
+
+// Run redirect handler on load, then refresh display state.
+handleSpotifyRedirectIfPresent().then(() => refreshSpotifyDisplay());
 
 // ============================================================
 // Supabase upload
