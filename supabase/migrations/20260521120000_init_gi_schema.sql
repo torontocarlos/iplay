@@ -1,5 +1,5 @@
 -- iPlay · Stage 1
--- gi_ schema in dryu-venture (project ref: jlbfoizasfrywrpnlobh)
+-- gi_ schema in dryu-ventures (project ref: jlbfoizasfrywrpnlobh)
 -- Stores sensor harness sessions and samples from web / RN / iOS harnesses.
 
 create schema if not exists gi_;
@@ -44,12 +44,12 @@ create table if not exists gi_.sample (
 
 -- ----------------------------------------------------------------------------
 -- gi_.ingest_session: stored proc to ingest one session JSON blob in one call.
--- The harnesses POST { session: {...}, samples: [...] } and call this RPC.
 -- ----------------------------------------------------------------------------
 create or replace function gi_.ingest_session(payload jsonb)
 returns uuid
 language plpgsql
 security definer
+set search_path = gi_, public
 as $$
 declare
   new_session_id uuid;
@@ -103,14 +103,28 @@ end;
 $$;
 
 -- ----------------------------------------------------------------------------
+-- public.gi_ingest_session: PostgREST-callable wrapper.
+-- The harness POSTs to /rest/v1/rpc/gi_ingest_session; the gi_ schema stays
+-- private (not in API → Exposed schemas).
+-- ----------------------------------------------------------------------------
+create or replace function public.gi_ingest_session(payload jsonb)
+returns uuid
+language sql
+security definer
+set search_path = public, gi_
+as $$
+  select gi_.ingest_session(payload);
+$$;
+
+grant execute on function public.gi_ingest_session(jsonb) to anon;
+
+-- ----------------------------------------------------------------------------
 -- RLS: enable, then add a permissive policy for now. Tighten in Stage 2.
 -- For Stage 1 the harness is single-user (you) and the data is non-PHI.
 -- ----------------------------------------------------------------------------
 alter table gi_.session enable row level security;
 alter table gi_.sample  enable row level security;
 
--- TEMP: anon insert allowed for harness ingestion. Replace with auth gate
--- once we're past Stage 1 and have multiple recording devices.
 create policy "stage1_anon_insert_session" on gi_.session
   for insert to anon with check (true);
 
@@ -126,3 +140,4 @@ create policy "stage1_anon_read_sample" on gi_.sample
 comment on schema gi_ is 'iPlay (gesture instrument). Stage 1: sensor harness sessions.';
 comment on table gi_.session is 'One row per recorded gesture probe across web/RN/iOS harnesses.';
 comment on table gi_.sample is 'Time-series sensor samples within a session. ~100 rows per second.';
+comment on function public.gi_ingest_session(jsonb) is 'PostgREST-callable wrapper for gi_.ingest_session. Keeps gi_ schema private.';

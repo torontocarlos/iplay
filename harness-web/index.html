@@ -392,8 +392,39 @@
     text-align: right;
     padding: 0 4px 8px;
     text-transform: uppercase;
+    display: flex;
+    justify-content: flex-end;
+    gap: 14px;
   }
   .session-counter .n { color: var(--signal); }
+
+  .sync-status .dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    margin-right: 5px;
+    vertical-align: 1px;
+    background: var(--ink-faint);
+  }
+  .sync-status[data-state="idle"]    .dot { background: var(--ink-faint); }
+  .sync-status[data-state="sending"] .dot {
+    background: var(--warn);
+    box-shadow: 0 0 6px var(--warn);
+    animation: pulse 1s ease-in-out infinite;
+  }
+  .sync-status[data-state="ok"]      .dot {
+    background: var(--signal);
+    box-shadow: 0 0 6px var(--signal-glow);
+  }
+  .sync-status[data-state="err"]     .dot {
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent);
+  }
+  .sync-status[data-state="idle"]    .label { color: var(--ink-faint); }
+  .sync-status[data-state="sending"] .label { color: var(--warn); }
+  .sync-status[data-state="ok"]      .label { color: var(--signal); }
+  .sync-status[data-state="err"]     .label { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -488,7 +519,10 @@
   </div>
 
   <div class="session-counter">
-    sessions captured: <span class="n" id="sessionCount">0</span>
+    <span>sessions captured: <span class="n" id="sessionCount">0</span></span>
+    <span class="sync-status" id="syncStatus" data-state="idle">
+      <span class="dot"></span><span class="label">sync · idle</span>
+    </span>
   </div>
 
 </main>
@@ -520,6 +554,12 @@
 // ============================================================
 
 const SCHEMA_VERSION = "1.0.0";
+
+// Supabase config — dryu-ventures project, gi_ schema.
+// The anon JWT is a public key by design and is safe to embed in client code.
+const SUPABASE_URL = "https://jlbfoizasfrywrpnlobh.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsYmZvaXphc2ZyeXdycG5sb2JoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYzNjYzMDIsImV4cCI6MjA5MTk0MjMwMn0.iJDRMO-VnLEUHokvk1S7EwBH6pvpcgwNUC-YCPBN-nU";
+const INGEST_URL = `${SUPABASE_URL}/rest/v1/rpc/gi_ingest_session`;
 
 // State
 const state = {
@@ -819,6 +859,53 @@ function stopRecording() {
   try {
     localStorage.setItem('iplay.sessions', JSON.stringify(state.sessions));
   } catch (e) { /* quota */ }
+  // Fire-and-forget upload to Supabase. Failures are surfaced via syncStatus
+  // and toast; the localStorage copy remains as the offline backup.
+  uploadSession(s);
+}
+
+// ============================================================
+// Supabase upload
+// ============================================================
+
+const syncStatusEl = document.getElementById('syncStatus');
+
+function setSyncStatus(stateName, label) {
+  if (!syncStatusEl) return;
+  syncStatusEl.dataset.state = stateName;
+  syncStatusEl.querySelector('.label').textContent = label || `sync · ${stateName}`;
+}
+
+async function uploadSession(session) {
+  setSyncStatus('sending', 'sync · sending');
+  try {
+    const resp = await fetch(INGEST_URL, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ payload: session })
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`${resp.status} ${text.slice(0, 200)}`);
+    }
+    const id = await resp.json();
+    const idStr = typeof id === 'string' ? id : JSON.stringify(id);
+    session.remote_id = idStr;
+    try {
+      localStorage.setItem('iplay.sessions', JSON.stringify(state.sessions));
+    } catch (e) { /* quota */ }
+    setSyncStatus('ok', `sync · ok ${idStr.slice(0, 8)}`);
+    toast(`uploaded · ${idStr.slice(0, 8)}`);
+    return idStr;
+  } catch (e) {
+    console.error('upload failed', e);
+    setSyncStatus('err', 'sync · failed');
+    toast(`upload failed · ${String(e.message || e).slice(0, 60)}`);
+  }
 }
 
 // ============================================================
