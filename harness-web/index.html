@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<title>iPlay · Stage 1 Harness</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600&family=Major+Mono+Display&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0d0f;
+    --panel: #11161a;
+    --panel-2: #161c22;
+    --line: #1f2830;
+    --ink: #c9d5dd;
+    --ink-dim: #6b7a86;
+    --ink-faint: #3a4750;
+    --signal: #6efacc;
+    --signal-glow: rgba(110, 250, 204, 0.35);
+    --accent: #ff5a3c;
+    --warn: #f5c451;
+    --gyro: #7ab8ff;
+    --att: #d18cff;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 13px;
+    overscroll-behavior: none;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    background:
+      radial-gradient(circle at 20% 0%, rgba(110, 250, 204, 0.04), transparent 40%),
+      radial-gradient(circle at 80% 100%, rgba(255, 90, 60, 0.03), transparent 40%),
+      var(--bg);
+    min-height: 100vh;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  /* faint scanline texture */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image: repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 2px,
+      rgba(255, 255, 255, 0.012) 2px,
+      rgba(255, 255, 255, 0.012) 3px
+    );
+    z-index: 1;
+  }
+
+  header {
+    padding: 18px 20px 14px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    position: relative;
+    z-index: 2;
+  }
+
+  .brand {
+    font-family: 'Major Mono Display', monospace;
+    font-size: 22px;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+  }
+  .brand .dot {
+    color: var(--signal);
+    text-shadow: 0 0 8px var(--signal-glow);
+  }
+  .subtitle {
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    color: var(--ink-dim);
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  .meta {
+    text-align: right;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--ink-dim);
+    text-transform: uppercase;
+    line-height: 1.6;
+  }
+  .meta .hz {
+    color: var(--signal);
+    font-weight: 600;
+  }
+
+  main {
+    padding: 16px 14px 120px;
+    position: relative;
+    z-index: 2;
+  }
+
+  /* Permission gate */
+  #gate {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 13, 15, 0.96);
+    backdrop-filter: blur(6px);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 28px;
+    text-align: center;
+  }
+  #gate.hidden { display: none; }
+  #gate h2 {
+    font-family: 'Major Mono Display', monospace;
+    font-size: 18px;
+    letter-spacing: 0.06em;
+    margin: 0 0 16px;
+    color: var(--signal);
+  }
+  #gate p {
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--ink-dim);
+    max-width: 320px;
+    margin: 0 0 28px;
+  }
+  #gate button {
+    background: var(--signal);
+    color: var(--bg);
+    border: none;
+    padding: 14px 28px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 2px;
+  }
+  #gate button:active { transform: translateY(1px); }
+  #gate .skip {
+    margin-top: 18px;
+    background: transparent;
+    color: var(--ink-dim);
+    border: 1px solid var(--line);
+    padding: 10px 20px;
+    font-size: 10px;
+  }
+
+  /* Panel block */
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    margin-bottom: 12px;
+    position: relative;
+  }
+  .panel-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 10px 14px 8px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel-2);
+  }
+  .panel-title {
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+  }
+  .panel-title .num {
+    color: var(--ink-faint);
+    margin-right: 8px;
+  }
+  .panel-stats {
+    font-size: 10px;
+    color: var(--ink-faint);
+    letter-spacing: 0.1em;
+  }
+  .panel-stats .v { color: var(--ink); }
+
+  /* Chart */
+  .chart-wrap {
+    padding: 10px 8px 4px;
+    position: relative;
+  }
+  canvas.signal {
+    display: block;
+    width: 100%;
+    height: 110px;
+  }
+  .axis-labels {
+    display: flex;
+    justify-content: space-around;
+    padding: 0 8px 8px;
+    font-size: 9px;
+    letter-spacing: 0.15em;
+  }
+  .axis-labels span { display: flex; align-items: center; gap: 4px; }
+  .axis-labels .swatch {
+    width: 10px;
+    height: 2px;
+    display: inline-block;
+  }
+  .swatch.x { background: var(--signal); box-shadow: 0 0 4px var(--signal-glow); }
+  .swatch.y { background: var(--gyro); }
+  .swatch.z { background: var(--att); }
+
+  /* Attitude block */
+  .attitude {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 1px;
+    background: var(--line);
+  }
+  .att-cell {
+    background: var(--panel);
+    padding: 14px 10px;
+    text-align: center;
+  }
+  .att-label {
+    font-size: 9px;
+    letter-spacing: 0.22em;
+    color: var(--ink-dim);
+    text-transform: uppercase;
+  }
+  .att-value {
+    font-size: 22px;
+    font-weight: 300;
+    color: var(--signal);
+    margin-top: 4px;
+    text-shadow: 0 0 6px var(--signal-glow);
+    font-variant-numeric: tabular-nums;
+  }
+  .att-unit {
+    font-size: 9px;
+    color: var(--ink-faint);
+    margin-left: 2px;
+  }
+
+  /* Phone orientation visualizer */
+  .visualizer {
+    height: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    perspective: 800px;
+    padding: 20px;
+  }
+  .phone3d {
+    width: 70px;
+    height: 130px;
+    border: 2px solid var(--signal);
+    border-radius: 10px;
+    position: relative;
+    transform-style: preserve-3d;
+    transition: none;
+    box-shadow: 0 0 12px var(--signal-glow), inset 0 0 8px rgba(110, 250, 204, 0.1);
+  }
+  .phone3d::before {
+    content: "";
+    position: absolute;
+    top: 10px; left: 50%;
+    transform: translateX(-50%);
+    width: 24px; height: 3px;
+    background: var(--ink-faint);
+    border-radius: 2px;
+  }
+  .phone3d::after {
+    content: "iPlay";
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-family: 'Major Mono Display', monospace;
+    font-size: 9px;
+    color: var(--signal);
+    letter-spacing: 0.15em;
+  }
+
+  /* Record bar */
+  .recbar {
+    position: fixed;
+    bottom: 0;
+    left: 0; right: 0;
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+    padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    z-index: 10;
+  }
+
+  select, .recbtn, .exportbtn {
+    font-family: inherit;
+    font-size: 11px;
+    background: var(--panel-2);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    padding: 10px 12px;
+    border-radius: 2px;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  select {
+    flex: 1;
+    background-image: linear-gradient(45deg, transparent 50%, var(--ink-dim) 50%), linear-gradient(135deg, var(--ink-dim) 50%, transparent 50%);
+    background-position: calc(100% - 14px) center, calc(100% - 10px) center;
+    background-size: 4px 4px;
+    background-repeat: no-repeat;
+    padding-right: 28px;
+  }
+
+  .recbtn {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    min-width: 90px;
+    position: relative;
+  }
+  .recbtn.recording {
+    animation: pulse 1s ease-in-out infinite;
+  }
+  .recbtn .reclight {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: white;
+    margin-right: 6px;
+    vertical-align: 1px;
+  }
+  .recbtn.recording .reclight {
+    background: white;
+    box-shadow: 0 0 8px white;
+  }
+  @keyframes pulse {
+    50% { box-shadow: 0 0 14px var(--accent); }
+  }
+
+  .exportbtn {
+    background: transparent;
+    color: var(--signal);
+    border-color: var(--signal);
+  }
+
+  /* Toast */
+  #toast {
+    position: fixed;
+    bottom: 90px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--panel-2);
+    border: 1px solid var(--signal);
+    color: var(--signal);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    padding: 10px 16px;
+    text-transform: uppercase;
+    z-index: 50;
+    opacity: 0;
+    transition: opacity 0.2s, transform 0.2s;
+    pointer-events: none;
+  }
+  #toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* Session counter */
+  .session-counter {
+    font-size: 9px;
+    color: var(--ink-faint);
+    letter-spacing: 0.2em;
+    text-align: right;
+    padding: 0 4px 8px;
+    text-transform: uppercase;
+  }
+  .session-counter .n { color: var(--signal); }
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <h2>iPlay · sensor harness</h2>
+  <p>This page requests motion and orientation access from your iPhone. iOS requires explicit permission. Tap below and accept the prompt.</p>
+  <button id="grant">Request access</button>
+  <button class="skip" id="skipGate">Skip — no sensors on this device</button>
+</div>
+
+<header>
+  <div>
+    <div class="brand">iplay<span class="dot">.</span></div>
+    <div class="subtitle">stage 1 · sensor harness · web</div>
+  </div>
+  <div class="meta">
+    <div>device <span id="device">—</span></div>
+    <div>rate <span class="hz" id="rate">— hz</span></div>
+  </div>
+</header>
+
+<main>
+
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title"><span class="num">01</span>orientation</div>
+      <div class="panel-stats">live attitude</div>
+    </div>
+    <div class="visualizer">
+      <div class="phone3d" id="phone3d"></div>
+    </div>
+    <div class="attitude">
+      <div class="att-cell">
+        <div class="att-label">roll</div>
+        <div class="att-value"><span id="att-roll">0.0</span><span class="att-unit">°</span></div>
+      </div>
+      <div class="att-cell">
+        <div class="att-label">pitch</div>
+        <div class="att-value"><span id="att-pitch">0.0</span><span class="att-unit">°</span></div>
+      </div>
+      <div class="att-cell">
+        <div class="att-label">yaw</div>
+        <div class="att-value"><span id="att-yaw">0.0</span><span class="att-unit">°</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title"><span class="num">02</span>accelerometer · raw</div>
+      <div class="panel-stats">m/s² · <span class="v" id="accel-stats">0.00</span></div>
+    </div>
+    <div class="chart-wrap">
+      <canvas class="signal" id="canvas-accel"></canvas>
+    </div>
+    <div class="axis-labels">
+      <span><span class="swatch x"></span>x</span>
+      <span><span class="swatch y"></span>y</span>
+      <span><span class="swatch z"></span>z</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title"><span class="num">03</span>user acceleration · gravity removed</div>
+      <div class="panel-stats">m/s² · <span class="v" id="uaccel-stats">0.00</span></div>
+    </div>
+    <div class="chart-wrap">
+      <canvas class="signal" id="canvas-uaccel"></canvas>
+    </div>
+    <div class="axis-labels">
+      <span><span class="swatch x"></span>x</span>
+      <span><span class="swatch y"></span>y</span>
+      <span><span class="swatch z"></span>z</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title"><span class="num">04</span>gyroscope · rotation rate</div>
+      <div class="panel-stats">°/s · <span class="v" id="gyro-stats">0.00</span></div>
+    </div>
+    <div class="chart-wrap">
+      <canvas class="signal" id="canvas-gyro"></canvas>
+    </div>
+    <div class="axis-labels">
+      <span><span class="swatch x"></span>α</span>
+      <span><span class="swatch y"></span>β</span>
+      <span><span class="swatch z"></span>γ</span>
+    </div>
+  </div>
+
+  <div class="session-counter">
+    sessions captured: <span class="n" id="sessionCount">0</span>
+  </div>
+
+</main>
+
+<div class="recbar">
+  <select id="gestureSelect">
+    <option value="noise_floor_flat">01 · noise floor (flat)</option>
+    <option value="noise_floor_held">02 · noise floor (held)</option>
+    <option value="trombone_slide">03 · trombone slide</option>
+    <option value="guitar_strum">04 · guitar strum</option>
+    <option value="shaker">05 · shaker</option>
+    <option value="conducting_arc">06 · conducting arc</option>
+    <option value="tap_strike">07 · tap strike</option>
+    <option value="theremin_pitch">08 · theremin pitch</option>
+    <option value="theremin_volume">09 · theremin volume</option>
+    <option value="rotate_in_place">10 · rotate in place</option>
+    <option value="freeform">99 · freeform</option>
+  </select>
+  <button class="recbtn" id="recbtn"><span class="reclight"></span>rec</button>
+  <button class="exportbtn" id="exportbtn">⇩</button>
+</div>
+
+<div id="toast">recording saved</div>
+
+<script>
+// ============================================================
+// iPlay Stage 1 Harness — web implementation
+// Writes sessions matching the shared-schema spec.
+// ============================================================
+
+const SCHEMA_VERSION = "1.0.0";
+
+// State
+const state = {
+  recording: false,
+  currentSession: null,
+  sessions: [],
+  rateBuffer: [],
+  lastSampleAt: null,
+  latest: {
+    accel: {x:0,y:0,z:0},
+    uaccel: {x:0,y:0,z:0},
+    gyro: {x:0,y:0,z:0},
+    attitude: {roll:0,pitch:0,yaw:0}
+  }
+};
+
+// Ring buffers for live charts (last N samples)
+const BUFFER_LEN = 180;
+function makeRing() { return { x: [], y: [], z: [] }; }
+const rings = {
+  accel: makeRing(),
+  uaccel: makeRing(),
+  gyro: makeRing()
+};
+
+function pushRing(r, x, y, z) {
+  r.x.push(x); r.y.push(y); r.z.push(z);
+  if (r.x.length > BUFFER_LEN) { r.x.shift(); r.y.shift(); r.z.shift(); }
+}
+
+// ============================================================
+// Permission gate (iOS 13+ requires user gesture)
+// ============================================================
+
+const gate = document.getElementById('gate');
+const grantBtn = document.getElementById('grant');
+const skipBtn = document.getElementById('skipGate');
+
+async function requestPermissions() {
+  let motionOk = true, orientOk = true;
+  try {
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+      const r = await DeviceMotionEvent.requestPermission();
+      motionOk = r === 'granted';
+    }
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const r = await DeviceOrientationEvent.requestPermission();
+      orientOk = r === 'granted';
+    }
+  } catch (e) {
+    console.error(e);
+  }
+  if (motionOk && orientOk) {
+    gate.classList.add('hidden');
+    startListening();
+  } else {
+    toast('permission denied');
+  }
+}
+
+grantBtn.addEventListener('click', requestPermissions);
+skipBtn.addEventListener('click', () => {
+  gate.classList.add('hidden');
+  // Try anyway — non-iOS browsers
+  startListening();
+});
+
+// ============================================================
+// Sensor listeners
+// ============================================================
+
+function startListening() {
+  window.addEventListener('devicemotion', onMotion);
+  window.addEventListener('deviceorientation', onOrient);
+  document.getElementById('device').textContent = detectDevice();
+}
+
+function detectDevice() {
+  const ua = navigator.userAgent;
+  if (/iPhone/.test(ua)) {
+    const m = ua.match(/iPhone OS (\d+_\d+)/);
+    return m ? `iPhone · iOS ${m[1].replace('_','.')}` : 'iPhone';
+  }
+  if (/iPad/.test(ua)) return 'iPad';
+  if (/Android/.test(ua)) return 'Android';
+  return 'Desktop · limited';
+}
+
+function onMotion(e) {
+  const now = performance.now();
+
+  // accelerationIncludingGravity is the raw accel
+  const a = e.accelerationIncludingGravity || {x:0,y:0,z:0};
+  // acceleration is gravity-removed (CoreMotion userAcceleration equivalent)
+  const ua = e.acceleration || {x:0,y:0,z:0};
+  const r = e.rotationRate || {alpha:0,beta:0,gamma:0};
+
+  const ax = a.x || 0, ay = a.y || 0, az = a.z || 0;
+  const uax = ua.x || 0, uay = ua.y || 0, uaz = ua.z || 0;
+  const gx = r.alpha || 0, gy = r.beta || 0, gz = r.gamma || 0;
+
+  state.latest.accel = {x: ax, y: ay, z: az};
+  state.latest.uaccel = {x: uax, y: uay, z: uaz};
+  state.latest.gyro = {x: gx, y: gy, z: gz};
+
+  pushRing(rings.accel, ax, ay, az);
+  pushRing(rings.uaccel, uax, uay, uaz);
+  pushRing(rings.gyro, gx, gy, gz);
+
+  // Update measured Hz
+  if (state.lastSampleAt !== null) {
+    const dt = now - state.lastSampleAt;
+    state.rateBuffer.push(dt);
+    if (state.rateBuffer.length > 60) state.rateBuffer.shift();
+  }
+  state.lastSampleAt = now;
+
+  // Numeric readouts
+  document.getElementById('accel-stats').textContent =
+    `x ${ax.toFixed(2)}  y ${ay.toFixed(2)}  z ${az.toFixed(2)}`;
+  document.getElementById('uaccel-stats').textContent =
+    `x ${uax.toFixed(2)}  y ${uay.toFixed(2)}  z ${uaz.toFixed(2)}`;
+  document.getElementById('gyro-stats').textContent =
+    `α ${gx.toFixed(1)}  β ${gy.toFixed(1)}  γ ${gz.toFixed(1)}`;
+
+  // Record sample
+  if (state.recording && state.currentSession) {
+    state.currentSession.samples.push({
+      t: now - state.currentSession._startedPerfNow,
+      accel: {x: ax, y: ay, z: az},
+      user_accel: {x: uax, y: uay, z: uaz},
+      gyro: {x: gx, y: gy, z: gz},
+      attitude: { ...state.latest.attitude }
+    });
+  }
+}
+
+function onOrient(e) {
+  // alpha = yaw, beta = pitch, gamma = roll (degrees)
+  const roll = e.gamma || 0;
+  const pitch = e.beta || 0;
+  const yaw = e.alpha || 0;
+  state.latest.attitude = {roll, pitch, yaw};
+
+  document.getElementById('att-roll').textContent = roll.toFixed(1);
+  document.getElementById('att-pitch').textContent = pitch.toFixed(1);
+  document.getElementById('att-yaw').textContent = yaw.toFixed(1);
+
+  // Drive 3D phone visualizer
+  const phone = document.getElementById('phone3d');
+  phone.style.transform =
+    `rotateX(${-pitch}deg) rotateY(${roll}deg) rotateZ(${-yaw}deg)`;
+}
+
+// ============================================================
+// Rate calculation
+// ============================================================
+setInterval(() => {
+  if (state.rateBuffer.length > 5) {
+    const avgDt = state.rateBuffer.reduce((a,b)=>a+b,0) / state.rateBuffer.length;
+    const hz = 1000 / avgDt;
+    document.getElementById('rate').textContent = `${hz.toFixed(1)} hz`;
+  }
+}, 500);
+
+// ============================================================
+// Canvas rendering
+// ============================================================
+
+const canvases = {
+  accel: document.getElementById('canvas-accel'),
+  uaccel: document.getElementById('canvas-uaccel'),
+  gyro: document.getElementById('canvas-gyro')
+};
+
+function fitCanvas(c) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr;
+  c.height = h * dpr;
+  const ctx = c.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+Object.values(canvases).forEach(fitCanvas);
+window.addEventListener('resize', () => Object.values(canvases).forEach(fitCanvas));
+
+const COLORS = {
+  x: '#6efacc',
+  y: '#7ab8ff',
+  z: '#d18cff'
+};
+
+function drawChart(canvas, ring, scaleHint) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  ctx.clearRect(0, 0, w, h);
+
+  // Grid
+  ctx.strokeStyle = '#1f2830';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 0; i <= 4; i++) {
+    const y = (h/4) * i;
+    ctx.moveTo(0, y); ctx.lineTo(w, y);
+  }
+  ctx.stroke();
+
+  // Auto-scale based on max abs in current buffer
+  let max = scaleHint;
+  for (const k of ['x','y','z']) {
+    for (const v of ring[k]) {
+      const a = Math.abs(v);
+      if (a > max) max = a;
+    }
+  }
+  max = Math.max(max, 0.5);
+  const mid = h / 2;
+
+  for (const axis of ['x','y','z']) {
+    const data = ring[axis];
+    if (data.length < 2) continue;
+    ctx.strokeStyle = COLORS[axis];
+    ctx.lineWidth = 1.4;
+    ctx.shadowColor = axis === 'x' ? 'rgba(110,250,204,0.4)' : 'transparent';
+    ctx.shadowBlur = axis === 'x' ? 4 : 0;
+    ctx.beginPath();
+    for (let i = 0; i < data.length; i++) {
+      const x = (i / (BUFFER_LEN - 1)) * w;
+      const y = mid - (data[i] / max) * (mid - 4);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+}
+
+function renderLoop() {
+  drawChart(canvases.accel, rings.accel, 12);
+  drawChart(canvases.uaccel, rings.uaccel, 2);
+  drawChart(canvases.gyro, rings.gyro, 90);
+  requestAnimationFrame(renderLoop);
+}
+requestAnimationFrame(renderLoop);
+
+// ============================================================
+// Recording
+// ============================================================
+
+const recbtn = document.getElementById('recbtn');
+const exportbtn = document.getElementById('exportbtn');
+const gestureSelect = document.getElementById('gestureSelect');
+
+recbtn.addEventListener('click', () => {
+  if (!state.recording) startRecording();
+  else stopRecording();
+});
+
+function startRecording() {
+  const gesture = gestureSelect.value;
+  state.currentSession = {
+    schema_version: SCHEMA_VERSION,
+    session_id: cryptoUUID(),
+    platform: 'web',
+    device_model: detectDevice(),
+    os_version: navigator.userAgent,
+    started_at: new Date().toISOString(),
+    gesture_label: gesture,
+    requested_hz: 60,
+    measured_hz: null,
+    samples: [],
+    _startedPerfNow: performance.now()
+  };
+  state.recording = true;
+  recbtn.classList.add('recording');
+  recbtn.innerHTML = '<span class="reclight"></span>stop';
+  toast(`recording · ${gesture}`);
+}
+
+function stopRecording() {
+  const s = state.currentSession;
+  if (!s) return;
+  const durationMs = performance.now() - s._startedPerfNow;
+  s.measured_hz = s.samples.length / (durationMs / 1000);
+  s.duration_ms = durationMs;
+  s.sample_count = s.samples.length;
+  delete s._startedPerfNow;
+  state.sessions.push(s);
+  state.recording = false;
+  state.currentSession = null;
+  recbtn.classList.remove('recording');
+  recbtn.innerHTML = '<span class="reclight"></span>rec';
+  document.getElementById('sessionCount').textContent = state.sessions.length;
+  toast(`saved · ${s.samples.length} samples · ${s.measured_hz.toFixed(1)} hz`);
+  // Auto-persist to localStorage as a safety net
+  try {
+    localStorage.setItem('iplay.sessions', JSON.stringify(state.sessions));
+  } catch (e) { /* quota */ }
+}
+
+// ============================================================
+// Export
+// ============================================================
+
+exportbtn.addEventListener('click', () => {
+  if (state.sessions.length === 0) {
+    toast('nothing to export');
+    return;
+  }
+  const blob = new Blob([JSON.stringify(state.sessions, null, 2)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const ts = new Date().toISOString().replace(/[:.]/g,'-');
+  a.href = url;
+  a.download = `iplay-sessions-${ts}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast(`exported ${state.sessions.length} sessions`);
+});
+
+// Restore previous sessions if any
+try {
+  const stored = localStorage.getItem('iplay.sessions');
+  if (stored) {
+    state.sessions = JSON.parse(stored);
+    document.getElementById('sessionCount').textContent = state.sessions.length;
+  }
+} catch (e) {}
+
+// ============================================================
+// Utilities
+// ============================================================
+
+function cryptoUUID() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random()*16|0;
+    return (c === 'x' ? r : (r&0x3|0x8)).toString(16);
+  });
+}
+
+let toastTimer;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+// If non-iOS (no permission needed), auto-dismiss gate after a beat
+if (typeof DeviceMotionEvent === 'undefined' ||
+    typeof DeviceMotionEvent.requestPermission !== 'function') {
+  // Auto-grant on non-iOS
+  setTimeout(() => {
+    gate.classList.add('hidden');
+    startListening();
+  }, 200);
+}
+</script>
+</body>
+</html>

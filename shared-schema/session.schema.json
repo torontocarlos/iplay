@@ -1,0 +1,141 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "iPlay Session Log",
+  "description": "Shared schema for sensor recordings across web, RN, and iOS harnesses. Stage 1.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "session_id",
+    "platform",
+    "started_at",
+    "gesture_label",
+    "samples"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Semver of this schema. Bump on breaking changes."
+    },
+    "session_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["web", "rn", "ios"]
+    },
+    "device_model": {
+      "type": "string",
+      "description": "Best-effort device identifier."
+    },
+    "os_version": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "gesture_label": {
+      "type": "string",
+      "description": "From the Stage 1 probe protocol, or 'freeform'.",
+      "enum": [
+        "noise_floor_flat",
+        "noise_floor_held",
+        "trombone_slide",
+        "guitar_strum",
+        "shaker",
+        "conducting_arc",
+        "tap_strike",
+        "theremin_pitch",
+        "theremin_volume",
+        "rotate_in_place",
+        "freeform"
+      ]
+    },
+    "requested_hz": {
+      "type": "number",
+      "description": "Sample rate requested from the platform API."
+    },
+    "measured_hz": {
+      "type": "number",
+      "description": "Actual rate computed at recording end."
+    },
+    "duration_ms": {
+      "type": "number"
+    },
+    "sample_count": {
+      "type": "integer"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "samples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["t", "accel", "gyro"],
+        "properties": {
+          "t": {
+            "type": "number",
+            "description": "Milliseconds since session start."
+          },
+          "accel": {
+            "type": "object",
+            "description": "Raw acceleration including gravity, m/s^2.",
+            "required": ["x", "y", "z"],
+            "properties": {
+              "x": {"type": "number"},
+              "y": {"type": "number"},
+              "z": {"type": "number"}
+            }
+          },
+          "user_accel": {
+            "type": "object",
+            "description": "Acceleration with gravity removed, m/s^2. CoreMotion userAcceleration equivalent.",
+            "properties": {
+              "x": {"type": "number"},
+              "y": {"type": "number"},
+              "z": {"type": "number"}
+            }
+          },
+          "gyro": {
+            "type": "object",
+            "description": "Rotation rate, deg/s on web (alpha/beta/gamma), rad/s on native.",
+            "properties": {
+              "x": {"type": "number"},
+              "y": {"type": "number"},
+              "z": {"type": "number"}
+            }
+          },
+          "attitude": {
+            "type": "object",
+            "description": "Euler angles in degrees.",
+            "properties": {
+              "roll": {"type": "number"},
+              "pitch": {"type": "number"},
+              "yaw": {"type": "number"}
+            }
+          },
+          "quaternion": {
+            "type": "object",
+            "description": "Orientation quaternion. Native only on Stage 1.",
+            "properties": {
+              "w": {"type": "number"},
+              "x": {"type": "number"},
+              "y": {"type": "number"},
+              "z": {"type": "number"}
+            }
+          },
+          "magnetometer": {
+            "type": "object",
+            "properties": {
+              "x": {"type": "number"},
+              "y": {"type": "number"},
+              "z": {"type": "number"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

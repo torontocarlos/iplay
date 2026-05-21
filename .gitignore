@@ -1,0 +1,22 @@
+node_modules/
+.DS_Store
+.vercel
+.env
+.env.local
+*.log
+dist/
+build/
+
+# Analysis notebook outputs
+.ipynb_checkpoints/
+analysis/data/
+*.parquet
+
+# iOS
+harness-ios/build/
+harness-ios/DerivedData/
+harness-ios/*.xcuserdata/
+
+# RN
+harness-rn/.expo/
+harness-rn/web-build/
