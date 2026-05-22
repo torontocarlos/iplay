@@ -916,7 +916,7 @@ function onMotion(e) {
     });
   }
 
-  detectReversal(uax, uay, uaz);
+  detectReversal(uax, uay, uaz, gx, gy, gz);
 }
 
 function onOrient(e) {
@@ -1543,7 +1543,11 @@ const drumState = {
   smAlpha: 0.3,
   prevDomAxis: '',
   prevDomSign: 0,
-  peakMagSinceHit: 0
+  // Drumstick-style velocity: peak excursion speed during the windup.
+  // Combines linear (|user_accel|) and radial (|gyro|) — a strike is
+  // loud if you swing your arm fast OR snap your wrist fast.
+  peakAccelSinceHit: 0,   // m/s²
+  peakGyroSinceHit: 0     // deg/s on web, rad/s on native
 };
 
 const drumEls = {
@@ -1665,21 +1669,24 @@ function fireDrum(voice, velocity) {
   flashDrumVoice(voice);
 }
 
-function detectReversal(uax, uay, uaz) {
+function detectReversal(uax, uay, uaz, gx, gy, gz) {
   if (!drumState.enabled) return;
   const now = performance.now();
 
-  // EMA-smooth the user_accel vector so single-sample noise can't flip the sign.
+  // EMA-smooth user_accel so single-sample noise can't flip the sign.
   const a = drumState.smAlpha;
   drumState.sm.x = drumState.sm.x * (1 - a) + uax * a;
   drumState.sm.y = drumState.sm.y * (1 - a) + uay * a;
   drumState.sm.z = drumState.sm.z * (1 - a) + uaz * a;
 
-  // Peak |accel| since last hit gates the fire and sets velocity.
-  const mag = Math.sqrt(uax*uax + uay*uay + uaz*uaz);
-  if (mag > drumState.peakMagSinceHit) drumState.peakMagSinceHit = mag;
+  // Track peak excursion speed since last hit — linear and radial both
+  // contribute to "how fast the stick was moving at impact".
+  const accelMag = Math.sqrt(uax*uax + uay*uay + uaz*uaz);
+  if (accelMag > drumState.peakAccelSinceHit) drumState.peakAccelSinceHit = accelMag;
+  const gyroMag = Math.sqrt(gx*gx + gy*gy + gz*gz);
+  if (gyroMag > drumState.peakGyroSinceHit) drumState.peakGyroSinceHit = gyroMag;
 
-  // Dominant axis of the smoothed signal.
+  // Dominant axis of the smoothed accel signal.
   const sx = drumState.sm.x, sy = drumState.sm.y, sz = drumState.sm.z;
   const ax = Math.abs(sx), ay = Math.abs(sy), az = Math.abs(sz);
   let val, axis;
@@ -1700,16 +1707,27 @@ function detectReversal(uax, uay, uaz) {
     return;
   }
 
-  // Same axis, opposite sign = movement reversal on that axis.
+  // Same axis, opposite sign = movement reversal on that axis = a strike.
   if (drumState.prevDomSign !== 0 && sign !== drumState.prevDomSign) {
-    const enoughSwing = drumState.peakMagSinceHit >= drumState.threshold * 0.4;
+    // Excursion energy: RSS of normalized linear and radial peaks.
+    // Linear: 25 m/s² is roughly a hard arm swing → ~1.0.
+    // Radial: 500 deg/s is roughly a hard wrist snap → ~1.0.
+    const linearTerm = drumState.peakAccelSinceHit / 25;
+    const radialTerm = drumState.peakGyroSinceHit  / 500;
+    const energy = Math.sqrt(linearTerm*linearTerm + radialTerm*radialTerm);
+
+    // Slider gates the floor. A reversal below the floor is treated as
+    // a stick brushing — too soft to make a sound.
+    const floor = drumState.threshold / 60;   // slider 4..28 → ~0.07..0.47
     const pastRefractory = now - drumState.lastHitAt >= drumState.refractoryMs;
-    if (enoughSwing && pastRefractory) {
+
+    if (energy >= floor && pastRefractory) {
       drumState.lastHitAt = now;
       const voice = pickDrumVoice();
-      const peak = drumState.peakMagSinceHit;
-      const velocity = Math.max(0.45, Math.min(1, peak / 25));
-      drumState.peakMagSinceHit = 0;
+      // Wide dynamic range: soft taps ~0.15, hard strikes 1.0.
+      const velocity = Math.max(0.15, Math.min(1, energy));
+      drumState.peakAccelSinceHit = 0;
+      drumState.peakGyroSinceHit = 0;
       fireDrum(voice, velocity);
     }
   }
