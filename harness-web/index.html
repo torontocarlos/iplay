@@ -569,6 +569,9 @@
     letter-spacing: 0.18em;
     color: var(--ink-dim);
     text-transform: uppercase;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
   }
   .drum-controls label { display: flex; flex-direction: column; gap: 8px; }
   .drum-controls .row {
@@ -711,6 +714,13 @@
             <span>threshold <span class="v" id="drumThresholdLabel">12.0</span> m/s²</span>
           </div>
           <input type="range" id="drumSlider" min="4" max="28" step="0.5" value="12" />
+        </label>
+        <label>
+          <div class="row">
+            <span>volume</span>
+            <span><span class="v" id="drumVolumeLabel">4.0</span>×</span>
+          </div>
+          <input type="range" id="drumVolumeSlider" min="0" max="8" step="0.1" value="4" />
         </label>
       </div>
       <div class="drum-hint">
@@ -1586,6 +1596,7 @@ const drumState = {
   audioCtx: null,
   masterGain: null,
   compressor: null,
+  masterVolume: 4.0,    // master gain multiplier; bound to the volume slider
   threshold: 12,        // m/s² min peak swing magnitude required for a beat to count
   refractoryMs: 110,    // debounce so one direction-change fires once
   lastHitAt: 0,
@@ -1603,10 +1614,12 @@ const drumState = {
 };
 
 const drumEls = {
-  toggle:    document.getElementById('drumToggle'),
-  slider:    document.getElementById('drumSlider'),
-  threshold: document.getElementById('drumThresholdLabel'),
-  hits:      document.getElementById('drumHits'),
+  toggle:      document.getElementById('drumToggle'),
+  slider:      document.getElementById('drumSlider'),
+  threshold:   document.getElementById('drumThresholdLabel'),
+  volSlider:   document.getElementById('drumVolumeSlider'),
+  volLabel:    document.getElementById('drumVolumeLabel'),
+  hits:        document.getElementById('drumHits'),
   voices: {
     hat:   document.querySelector('.drum-voice[data-voice="hat"]'),
     snare: document.querySelector('.drum-voice[data-voice="snare"]'),
@@ -1619,13 +1632,15 @@ function ensureAudioCtx() {
     const AC = window.AudioContext || window.webkitAudioContext;
     drumState.audioCtx = new AC();
     const ctx = drumState.audioCtx;
-    // voices → masterGain (boost) → compressor (tame peaks) → destination
+    // voices → masterGain (boost) → compressor (tame peaks) → destination.
+    // Compressor is aggressive so a high masterGain doesn't clip — the
+    // perceived loudness comes from the gain, peaks are caught by it.
     drumState.masterGain = ctx.createGain();
-    drumState.masterGain.gain.value = 2.6;
+    drumState.masterGain.gain.value = drumState.masterVolume;
     drumState.compressor = ctx.createDynamicsCompressor();
-    drumState.compressor.threshold.value = -10;
-    drumState.compressor.knee.value = 8;
-    drumState.compressor.ratio.value = 4;
+    drumState.compressor.threshold.value = -14;
+    drumState.compressor.knee.value = 10;
+    drumState.compressor.ratio.value = 6;
     drumState.compressor.attack.value = 0.002;
     drumState.compressor.release.value = 0.15;
     drumState.masterGain.connect(drumState.compressor).connect(ctx.destination);
@@ -1804,6 +1819,18 @@ drumEls.toggle.addEventListener('click', () => {
 drumEls.slider.addEventListener('input', (e) => {
   drumState.threshold = parseFloat(e.target.value);
   drumEls.threshold.textContent = drumState.threshold.toFixed(1);
+});
+
+drumEls.volSlider.addEventListener('input', (e) => {
+  const v = parseFloat(e.target.value);
+  drumState.masterVolume = v;
+  drumEls.volLabel.textContent = v.toFixed(1);
+  if (drumState.masterGain && drumState.audioCtx) {
+    // Short ramp avoids zipper noise while dragging the slider.
+    const now = drumState.audioCtx.currentTime;
+    drumState.masterGain.gain.cancelScheduledValues(now);
+    drumState.masterGain.gain.setTargetAtTime(v, now, 0.02);
+  }
 });
 
 // ============================================================
