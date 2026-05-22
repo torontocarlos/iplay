@@ -683,7 +683,7 @@
         </label>
       </div>
       <div class="drum-hint">
-        swing the phone to strike · tilt picks the voice<br/>
+        beats fire on direction change · tilt picks the voice<br/>
         audio routes through whatever output the iphone is playing on
       </div>
     </div>
@@ -916,7 +916,7 @@ function onMotion(e) {
     });
   }
 
-  detectStrike(uax, uay, uaz);
+  detectReversal(uax, uay, uaz);
 }
 
 function onOrient(e) {
@@ -1532,10 +1532,18 @@ try {
 const drumState = {
   enabled: false,
   audioCtx: null,
-  threshold: 12,        // m/s² user-acceleration magnitude to fire
-  refractoryMs: 110,    // debounce so one swing fires once
+  masterGain: null,
+  compressor: null,
+  threshold: 12,        // m/s² min peak swing magnitude required for a beat to count
+  refractoryMs: 110,    // debounce so one direction-change fires once
   lastHitAt: 0,
-  hits: 0
+  hits: 0,
+  // Reversal detector: EMA-smoothed user_accel, dominant-axis sign flips.
+  sm: {x:0, y:0, z:0},
+  smAlpha: 0.3,
+  prevDomAxis: '',
+  prevDomSign: 0,
+  peakMagSinceHit: 0
 };
 
 const drumEls = {
@@ -1554,6 +1562,17 @@ function ensureAudioCtx() {
   if (!drumState.audioCtx) {
     const AC = window.AudioContext || window.webkitAudioContext;
     drumState.audioCtx = new AC();
+    const ctx = drumState.audioCtx;
+    // voices → masterGain (boost) → compressor (tame peaks) → destination
+    drumState.masterGain = ctx.createGain();
+    drumState.masterGain.gain.value = 2.6;
+    drumState.compressor = ctx.createDynamicsCompressor();
+    drumState.compressor.threshold.value = -10;
+    drumState.compressor.knee.value = 8;
+    drumState.compressor.ratio.value = 4;
+    drumState.compressor.attack.value = 0.002;
+    drumState.compressor.release.value = 0.15;
+    drumState.masterGain.connect(drumState.compressor).connect(ctx.destination);
   }
   if (drumState.audioCtx.state === 'suspended') drumState.audioCtx.resume();
   return drumState.audioCtx;
@@ -1568,7 +1587,7 @@ function playKick(velocity) {
   osc.frequency.exponentialRampToValueAtTime(45, t + 0.16);
   g.gain.setValueAtTime(0.95 * velocity, t);
   g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
-  osc.connect(g).connect(ctx.destination);
+  osc.connect(g).connect(drumState.masterGain);
   osc.start(t); osc.stop(t + 0.24);
 }
 
@@ -1584,7 +1603,7 @@ function playSnare(velocity) {
   const ng = ctx.createGain();
   ng.gain.setValueAtTime(0.6 * velocity, t);
   ng.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
-  noise.connect(bp).connect(ng).connect(ctx.destination);
+  noise.connect(bp).connect(ng).connect(drumState.masterGain);
 
   const osc = ctx.createOscillator();
   osc.frequency.setValueAtTime(220, t);
@@ -1592,7 +1611,7 @@ function playSnare(velocity) {
   const og = ctx.createGain();
   og.gain.setValueAtTime(0.4 * velocity, t);
   og.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
-  osc.connect(og).connect(ctx.destination);
+  osc.connect(og).connect(drumState.masterGain);
 
   noise.start(t); noise.stop(t + 0.16);
   osc.start(t);   osc.stop(t + 0.1);
@@ -1610,7 +1629,7 @@ function playHat(velocity) {
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.3 * velocity, t);
   g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
-  noise.connect(hp).connect(g).connect(ctx.destination);
+  noise.connect(hp).connect(g).connect(drumState.masterGain);
   noise.start(t); noise.stop(t + 0.06);
 }
 
@@ -1646,17 +1665,55 @@ function fireDrum(voice, velocity) {
   flashDrumVoice(voice);
 }
 
-function detectStrike(uax, uay, uaz) {
+function detectReversal(uax, uay, uaz) {
   if (!drumState.enabled) return;
-  const mag = Math.sqrt(uax*uax + uay*uay + uaz*uaz);
   const now = performance.now();
-  if (mag > drumState.threshold && now - drumState.lastHitAt >= drumState.refractoryMs) {
-    drumState.lastHitAt = now;
-    const voice = pickDrumVoice();
-    // Map magnitude above threshold to 0.4..1.0 velocity
-    const velocity = Math.max(0.3, Math.min(1, (mag - drumState.threshold) / 16 + 0.4));
-    fireDrum(voice, velocity);
+
+  // EMA-smooth the user_accel vector so single-sample noise can't flip the sign.
+  const a = drumState.smAlpha;
+  drumState.sm.x = drumState.sm.x * (1 - a) + uax * a;
+  drumState.sm.y = drumState.sm.y * (1 - a) + uay * a;
+  drumState.sm.z = drumState.sm.z * (1 - a) + uaz * a;
+
+  // Peak |accel| since last hit gates the fire and sets velocity.
+  const mag = Math.sqrt(uax*uax + uay*uay + uaz*uaz);
+  if (mag > drumState.peakMagSinceHit) drumState.peakMagSinceHit = mag;
+
+  // Dominant axis of the smoothed signal.
+  const sx = drumState.sm.x, sy = drumState.sm.y, sz = drumState.sm.z;
+  const ax = Math.abs(sx), ay = Math.abs(sy), az = Math.abs(sz);
+  let val, axis;
+  if (ax >= ay && ax >= az) { val = sx; axis = 'x'; }
+  else if (ay >= az)        { val = sy; axis = 'y'; }
+  else                       { val = sz; axis = 'z'; }
+
+  // Deadzone so hand tremor near zero doesn't flip the tracked sign.
+  const deadzone = 0.6;
+  const sign = val >  deadzone ?  1 :
+               val < -deadzone ? -1 : 0;
+  if (sign === 0) return;
+
+  // Dominant axis changed — reseed, don't count it as a reversal.
+  if (axis !== drumState.prevDomAxis) {
+    drumState.prevDomAxis = axis;
+    drumState.prevDomSign = sign;
+    return;
   }
+
+  // Same axis, opposite sign = movement reversal on that axis.
+  if (drumState.prevDomSign !== 0 && sign !== drumState.prevDomSign) {
+    const enoughSwing = drumState.peakMagSinceHit >= drumState.threshold * 0.4;
+    const pastRefractory = now - drumState.lastHitAt >= drumState.refractoryMs;
+    if (enoughSwing && pastRefractory) {
+      drumState.lastHitAt = now;
+      const voice = pickDrumVoice();
+      const peak = drumState.peakMagSinceHit;
+      const velocity = Math.max(0.45, Math.min(1, peak / 25));
+      drumState.peakMagSinceHit = 0;
+      fireDrum(voice, velocity);
+    }
+  }
+  drumState.prevDomSign = sign;
 }
 
 drumEls.toggle.addEventListener('click', () => {
