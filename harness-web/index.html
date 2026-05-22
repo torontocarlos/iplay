@@ -601,6 +601,37 @@
     text-align: center;
     line-height: 1.6;
   }
+
+  /* me mode — gestural art panel */
+  .me-body {
+    padding: 14px 14px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .me-canvas-wrap {
+    position: relative;
+    width: 100%;
+    height: 280px;
+    background: #050708;
+    border: 1px solid var(--line);
+    overflow: hidden;
+  }
+  #me-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .me-stats {
+    display: flex;
+    justify-content: space-between;
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    padding: 0 2px;
+  }
+  .me-stats .v { color: var(--signal); }
 </style>
 </head>
 <body>
@@ -685,6 +716,26 @@
       <div class="drum-hint">
         beats fire on direction change · tilt picks the voice<br/>
         audio routes through whatever output the iphone is playing on
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="mePanel">
+    <div class="panel-head">
+      <div class="panel-title"><span class="num">me</span>me mode · gestural art</div>
+      <div class="panel-stats"><span class="v" id="meHits">0</span> strikes painted</div>
+    </div>
+    <div class="me-body">
+      <button class="drum-toggle" id="meToggle">me mode · off</button>
+      <div class="me-canvas-wrap">
+        <canvas id="me-canvas"></canvas>
+      </div>
+      <div class="me-stats">
+        <span>head · <span class="v" id="meHeadXY">·</span></span>
+        <span>particles · <span class="v" id="meParticleCount">0</span></span>
+      </div>
+      <div class="drum-hint">
+        tilt to move · trail thickens with rotation · drum hits flare in voice color
       </div>
     </div>
   </div>
@@ -1026,6 +1077,7 @@ function renderLoop() {
   drawChart(canvases.accel, rings.accel, 12);
   drawChart(canvases.uaccel, rings.uaccel, 2);
   drawChart(canvases.gyro, rings.gyro, 90);
+  meRender();
   requestAnimationFrame(renderLoop);
 }
 requestAnimationFrame(renderLoop);
@@ -1667,6 +1719,7 @@ function fireDrum(voice, velocity) {
   drumState.hits++;
   drumEls.hits.textContent = drumState.hits;
   flashDrumVoice(voice);
+  meOnHit(voice, velocity);
 }
 
 function detectReversal(uax, uay, uaz, gx, gy, gz) {
@@ -1752,6 +1805,184 @@ drumEls.slider.addEventListener('input', (e) => {
   drumState.threshold = parseFloat(e.target.value);
   drumEls.threshold.textContent = drumState.threshold.toFixed(1);
 });
+
+// ============================================================
+// Me mode — gestural art panel.
+// Continuous: phone attitude drives a glowing trail across the canvas;
+// trail thickness/glow scale with current angular speed.
+// Discrete: every drum strike spawns a voice-colored radial burst at
+// the trail head, sized by velocity.
+// ============================================================
+
+const meState = {
+  enabled: false,
+  canvas: null,
+  ctx: null,
+  w: 0, h: 0,
+  trail: [],          // recent head positions
+  trailLen: 80,
+  particles: [],      // burst particles from drum hits
+  hits: 0,
+  lastDrawAt: 0
+};
+
+const ME_VOICE_COLOR = {
+  kick:  '#ff5a3c',
+  snare: '#6efacc',
+  hat:   '#d18cff'
+};
+
+const meEls = {
+  toggle:    document.getElementById('meToggle'),
+  canvas:    document.getElementById('me-canvas'),
+  hits:      document.getElementById('meHits'),
+  headXY:    document.getElementById('meHeadXY'),
+  particles: document.getElementById('meParticleCount')
+};
+
+function meFitCanvas() {
+  if (!meState.canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const c = meState.canvas;
+  const w = c.clientWidth, h = c.clientHeight;
+  c.width  = w * dpr;
+  c.height = h * dpr;
+  meState.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  meState.w = w; meState.h = h;
+  // wipe to base background
+  meState.ctx.fillStyle = '#050708';
+  meState.ctx.fillRect(0, 0, w, h);
+}
+
+if (meEls.canvas) {
+  meState.canvas = meEls.canvas;
+  meState.ctx = meState.canvas.getContext('2d');
+  meFitCanvas();
+  window.addEventListener('resize', meFitCanvas);
+}
+
+function meOnHit(voice, velocity) {
+  if (!meState.enabled) return;
+  const head = meState.trail.length
+    ? meState.trail[meState.trail.length - 1]
+    : { x: meState.w / 2, y: meState.h / 2 };
+  const color = ME_VOICE_COLOR[voice] || '#6efacc';
+  const n = Math.floor(16 + 24 * velocity);
+  for (let i = 0; i < n; i++) {
+    const angle = (i / n) * Math.PI * 2 + Math.random() * 0.5;
+    const speed = (50 + Math.random() * 110) * (0.4 + velocity * 0.9);
+    meState.particles.push({
+      x: head.x, y: head.y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 0.8 + velocity * 0.6,
+      size: 1.5 + velocity * 2.5,
+      color
+    });
+  }
+  meState.hits++;
+  if (meEls.hits) meEls.hits.textContent = meState.hits;
+}
+
+function meRender() {
+  if (!meState.enabled || !meState.ctx) return;
+  const ctx = meState.ctx;
+  const w = meState.w, h = meState.h;
+  const now = performance.now();
+  const dt = Math.min(50, now - (meState.lastDrawAt || now)) / 1000;
+  meState.lastDrawAt = now;
+
+  // Persistent fade: semi-transparent fill so older strokes/particles linger.
+  ctx.fillStyle = 'rgba(5, 7, 8, 0.16)';
+  ctx.fillRect(0, 0, w, h);
+
+  // Map attitude → canvas position.
+  // roll  ∈ [-90, 90]   → x (left/right tilt)
+  // pitch ∈ [-90, 90]   → y (forward/back tilt; flip so nose-down = bottom)
+  const att = state.latest.attitude;
+  const roll  = Math.max(-90, Math.min(90, att.roll  || 0));
+  const pitch = Math.max(-90, Math.min(90, att.pitch || 0));
+  const x = w * 0.5 + (roll  / 90) * (w * 0.42);
+  const y = h * 0.5 + (pitch / 90) * (h * 0.42);
+
+  meState.trail.push({ x, y });
+  if (meState.trail.length > meState.trailLen) meState.trail.shift();
+
+  // Trail intensity from current angular speed.
+  const g = state.latest.gyro;
+  const gmag = Math.sqrt(g.x * g.x + g.y * g.y + g.z * g.z);
+  const intensity = Math.min(1, gmag / 300);
+  const lineW = 1.2 + intensity * 4;
+
+  // Trail path.
+  if (meState.trail.length >= 2) {
+    ctx.strokeStyle = '#6efacc';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = lineW;
+    ctx.shadowColor = 'rgba(110, 250, 204, 0.55)';
+    ctx.shadowBlur = 8 + intensity * 14;
+    ctx.beginPath();
+    ctx.moveTo(meState.trail[0].x, meState.trail[0].y);
+    for (let i = 1; i < meState.trail.length; i++) {
+      ctx.lineTo(meState.trail[i].x, meState.trail[i].y);
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  // Head dot.
+  ctx.fillStyle = '#6efacc';
+  ctx.shadowColor = 'rgba(110, 250, 204, 0.7)';
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.arc(x, y, 3 + intensity * 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Particles: integrate, fade, draw.
+  const alive = [];
+  for (const p of meState.particles) {
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vx *= 0.92;
+    p.vy *= 0.92;
+    p.life -= dt * 1.3;
+    if (p.life <= 0) continue;
+    const alpha = Math.max(0, Math.min(1, p.life));
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = alpha;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 7 * alpha;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * (0.5 + alpha * 0.5), 0, Math.PI * 2);
+    ctx.fill();
+    alive.push(p);
+  }
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
+  meState.particles = alive;
+
+  // Stats line.
+  if (meEls.headXY)    meEls.headXY.textContent = `${Math.round(x)}, ${Math.round(y)}`;
+  if (meEls.particles) meEls.particles.textContent = meState.particles.length;
+}
+
+if (meEls.toggle) {
+  meEls.toggle.addEventListener('click', () => {
+    meState.enabled = !meState.enabled;
+    if (meState.enabled) {
+      meEls.toggle.classList.add('on');
+      meEls.toggle.textContent = 'me mode · on';
+      meFitCanvas();
+      meState.trail = [];
+      meState.particles = [];
+    } else {
+      meEls.toggle.classList.remove('on');
+      meEls.toggle.textContent = 'me mode · off';
+    }
+  });
+}
 
 // ============================================================
 // Utilities
