@@ -1632,7 +1632,7 @@ function ensureAudioCtx() {
     const AC = window.AudioContext || window.webkitAudioContext;
     drumState.audioCtx = new AC();
     const ctx = drumState.audioCtx;
-    // voices → masterGain (boost) → compressor (tame peaks) → destination.
+    // voices → masterGain (boost) → compressor (tame peaks) → output.
     // Compressor is aggressive so a high masterGain doesn't clip — the
     // perceived loudness comes from the gain, peaks are caught by it.
     drumState.masterGain = ctx.createGain();
@@ -1643,9 +1643,50 @@ function ensureAudioCtx() {
     drumState.compressor.ratio.value = 6;
     drumState.compressor.attack.value = 0.002;
     drumState.compressor.release.value = 0.15;
-    drumState.masterGain.connect(drumState.compressor).connect(ctx.destination);
+    drumState.masterGain.connect(drumState.compressor);
+
+    // iOS Safari quirk: raw WebAudio (ctx.destination) is locked to the
+    // internal speaker even when Bluetooth is the system audio route.
+    // Route through a MediaStreamDestination → <audio> element so iOS
+    // treats the drum output as media playback and follows the system
+    // route (Bluetooth, AirPods, etc.) the same way Spotify does.
+    let routedThroughMedia = false;
+    if (typeof ctx.createMediaStreamDestination === 'function') {
+      try {
+        drumState.streamDest = ctx.createMediaStreamDestination();
+        drumState.compressor.connect(drumState.streamDest);
+        const a = document.createElement('audio');
+        a.setAttribute('playsinline', '');
+        a.setAttribute('webkit-playsinline', '');
+        a.autoplay = true;
+        a.controls = false;
+        a.style.display = 'none';
+        a.srcObject = drumState.streamDest.stream;
+        document.body.appendChild(a);
+        drumState.outAudio = a;
+        // play() must run under a user gesture; ensureAudioCtx is first
+        // reached from the drum-toggle click handler, which qualifies.
+        a.play().catch(err => {
+          console.warn('[drum] media route play failed, falling back', err);
+          try { drumState.compressor.disconnect(drumState.streamDest); } catch (e) {}
+          drumState.streamDest = null;
+          drumState.outAudio = null;
+          drumState.compressor.connect(ctx.destination);
+        });
+        routedThroughMedia = true;
+      } catch (err) {
+        console.warn('[drum] MediaStreamDestination unavailable, falling back', err);
+      }
+    }
+    if (!routedThroughMedia) {
+      drumState.compressor.connect(ctx.destination);
+    }
   }
   if (drumState.audioCtx.state === 'suspended') drumState.audioCtx.resume();
+  // If iOS paused the routing element (tab backgrounded, etc.), kick it back.
+  if (drumState.outAudio && drumState.outAudio.paused) {
+    drumState.outAudio.play().catch(() => {});
+  }
   return drumState.audioCtx;
 }
 
