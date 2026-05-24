@@ -1,0 +1,27 @@
+{
+  "name": "email-triage",
+  "version": "0.1.0",
+  "description": "AI-powered email auto-triage and response engine",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "bulk": "tsx src/modes/bulk.ts",
+    "auth:gmail": "tsx src/providers/gmail-auth.ts",
+    "auth:outlook": "tsx src/providers/outlook-auth.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "googleapis": "^144.0.0",
+    "isomorphic-fetch": "^3.0.0",
+    "open": "^10.1.0",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
